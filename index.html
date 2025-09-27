@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geo Duel - Country Guesser Game</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            touch-action: manipulation; /* Prevents double-tap zoom on mobile */
+        }
+        /* Basic styling for the map */
+        #world-map-container {
+            width: 100%;
+            margin: auto;
+            border: 2px solid #374151;
+            border-radius: 0.75rem;
+            background-color: #dbeafe;
+            position: relative;
+            cursor: grab;
+            /* Desktop: Large enough to see full map */
+            height: 70vh;
+            max-height: 600px;
+            overflow: hidden;
+        }
+
+        /* Desktop and larger screens: Show full map */
+        @media (min-width: 1024px) {
+            #world-map-container {
+                width: 100%;
+                max-width: 1400px;
+                height: 75vh;
+                max-height: 700px;
+                overflow: hidden;
+            }
+            
+            #world-map {
+                width: 100%;
+                height: 100%;
+                object-fit: contain;
+            }
+        }
+
+        /* Mobile devices: Both horizontal and vertical scroll */
+        @media (max-width: 1023px) {
+            #world-map-container {
+                overflow: auto;
+                height: 50vh;
+                max-height: 400px;
+                /* Enable momentum scrolling on iOS */
+                -webkit-overflow-scrolling: touch;
+                /* Show scrollbar on mobile for better UX */
+                scrollbar-width: thin;
+            }
+            
+            #world-map {
+                width: 150vw; /* Make map wider than screen for scrolling */
+                min-width: 800px;
+                height: auto;
+                min-height: 150%;
+            }
+        }
+
+        /* Very small mobile devices */
+        @media (max-width: 480px) {
+            #world-map-container {
+                height: 40vh;
+                max-height: 300px;
+            }
+            
+            #world-map {
+                width: 200vw; /* Even wider for very small screens */
+                min-width: 1000px;
+                min-height: 200%;
+            }
+        }
+
+        /* Custom scrollbar for better mobile experience */
+        #world-map-container::-webkit-scrollbar {
+            height: 8px;
+        }
+
+        #world-map-container::-webkit-scrollbar-track {
+            background: #374151;
+            border-radius: 4px;
+        }
+
+        #world-map-container::-webkit-scrollbar-thumb {
+            background: #6b7280;
+            border-radius: 4px;
+        }
+
+        #world-map-container::-webkit-scrollbar-thumb:hover {
+            background: #9ca3af;
+        }
+        #world-map path {
+            fill: #a5b4fc;
+            stroke: #4338ca;
+            stroke-width: 0.5;
+            transition: fill 0.2s ease-in-out;
+        }
+        #world-map path:hover {
+            fill: #818cf8;
+        }
+        /* Styling for guessed countries */
+        #world-map path.correct-guess {
+            fill: #86efac !important;
+        }
+        #world-map path.incorrect-guess {
+            fill: #fca5a5 !important;
+        }
+        #world-map path.opponent-incorrect-guess {
+            fill: #fef08a !important;
+        }
+        /* Zoom and pan controls */
+        .zoom-controls {
+            position: absolute;
+            bottom: 1rem;
+            right: 1rem;
+            z-index: 10;
+        }
+
+        /* Make zoom controls sticky on mobile */
+        @media (max-width: 1023px) {
+            .zoom-controls {
+                position: fixed;
+                bottom: 2rem;
+                right: 1rem;
+                z-index: 50;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div id="game-container" class="w-full max-w-7xl mx-auto text-center">
+
+        <h1 class="text-4xl md:text-5xl font-bold mb-2 text-indigo-400">Geo Duel</h1>
+        <p class="text-gray-400 mb-6">The Ultimate P2P Country Guessing Game</p>
+
+        <div id="setup-screen" class="w-full max-w-lg mx-auto text-center space-y-6">
+             <div id="create-section" class="bg-gray-800 p-6 rounded-lg">
+                <h2 class="text-2xl font-semibold mb-4">1. Create a Game</h2>
+                <button id="create-game-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition-transform transform hover:scale-105">Create Game</button>
+                <div id="host-info" class="hidden mt-4">
+                    <p class="mb-2">Share your Host ID with a friend:</p>
+                    <div class="flex justify-center items-center space-x-2">
+                        <input id="host-id-input" type="text" class="bg-gray-700 text-white p-2 rounded-md w-full max-w-md text-center" readonly>
+                        <button id="copy-id-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg">Copy</button>
+                    </div>
+                     <p id="copy-success" class="text-green-400 mt-2 h-5"></p>
+                    <p class="text-gray-500 mt-4 animate-pulse">Waiting for opponent to join...</p>
+                </div>
+            </div>
+
+            <div id="or-divider" class="text-gray-500 font-bold text-xl">OR</div>
+
+            <div id="join-section" class="bg-gray-800 p-6 rounded-lg">
+                <h2 class="text-2xl font-semibold mb-4">2. Join a Game</h2>
+                <p class="text-gray-400 mb-2">Enter your friend's Host ID:</p>
+                <div class="flex justify-center items-center space-x-2">
+                    <input id="join-id-input" type="text" class="bg-gray-700 text-white p-2 rounded-md w-full max-w-xs text-center" placeholder="Enter Host ID...">
+                    <button id="join-game-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg">Join</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="game-screen" class="hidden">
+            <!-- Session Scoreboard -->
+            <div class="grid grid-cols-3 gap-4 mb-3 bg-gray-800 p-3 rounded-lg items-center">
+                <div class="text-left">
+                    <span class="text-indigo-400 font-semibold">You</span>
+                    <span class="text-2xl font-bold ml-2" id="session-player1-score">0</span>
+                </div>
+                <div class="text-center">
+                    <p class="text-gray-400 text-sm">Session Score</p>
+                    <p class="text-xs text-gray-500">First to 10 wins</p>
+                </div>
+                <div class="text-right">
+                    <span class="text-2xl font-bold mr-2" id="session-player2-score">0</span>
+                    <span class="text-indigo-400 font-semibold">Opponent</span>
+                </div>
+            </div>
+
+            <!-- Round Info -->
+            <div class="grid grid-cols-3 gap-4 mb-4 bg-gray-800 p-4 rounded-lg items-center">
+                <div id="player1-info" class="text-left">
+                    <h3 class="text-lg font-semibold">You: <span id="player1-score">0</span></h3>
+                    <p class="text-sm text-gray-400">Chances Left: <span id="player1-chances">3</span></p>
+                </div>
+                <div id="round-info" class="text-center">
+                    <p class="text-gray-400">Find this country:</p>
+                    <h2 id="country-to-guess" class="text-2xl font-bold text-indigo-400"></h2>
+                </div>
+                <div id="player2-info" class="text-right">
+                    <h3 class="text-lg font-semibold">Opponent: <span id="player2-score">0</span></h3>
+                    <p class="text-sm text-gray-400">Chances Left: <span id="player2-chances">3</span></p>
+                </div>
+            </div>
+
+            <div id="message-area" class="h-8 mb-4 text-xl font-semibold text-amber-300"></div>
+
+            <div id="world-map-container">
+                <div class="zoom-controls flex flex-col space-y-2">
+                    <button id="zoom-in-btn" class="bg-gray-700 w-10 h-10 rounded-full text-xl font-bold">+</button>
+                    <button id="zoom-out-btn" class="bg-gray-700 w-10 h-10 rounded-full text-xl font-bold">-</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="game-over-modal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+        <div class="bg-gray-800 p-8 rounded-lg text-center shadow-2xl">
+            <h2 id="game-over-title" class="text-4xl font-bold mb-4"></h2>
+            <p id="game-over-message" class="text-xl mb-6"></p>
+            <button id="play-again-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg">Play Again</button>
+        </div>
+    </div>
+
+
+    <script>
+        // --- DOM Elements ---
+        const setupScreen = document.getElementById('setup-screen');
+        const gameScreen = document.getElementById('game-screen');
+        const createGameBtn = document.getElementById('create-game-btn');
+        const copySuccess = document.getElementById('copy-success');
+        const createSection = document.getElementById('create-section');
+        const joinSection = document.getElementById('join-section');
+        const orDivider = document.getElementById('or-divider');
+        const hostInfo = document.getElementById('host-info');
+        const hostIdInput = document.getElementById('host-id-input');
+        const copyIdBtn = document.getElementById('copy-id-btn');
+        const joinIdInput = document.getElementById('join-id-input');
+        const joinGameBtn = document.getElementById('join-game-btn');
+        
+        const player1ScoreEl = document.getElementById('player1-score');
+        const player1ChancesEl = document.getElementById('player1-chances');
+        const player2ScoreEl = document.getElementById('player2-score');
+        const player2ChancesEl = document.getElementById('player2-chances');
+        const sessionPlayer1ScoreEl = document.getElementById('session-player1-score');
+        const sessionPlayer2ScoreEl = document.getElementById('session-player2-score');
+        const countryToGuessEl = document.getElementById('country-to-guess');
+        const messageArea = document.getElementById('message-area');
+        
+        const gameOverModal = document.getElementById('game-over-modal');
+        const gameOverTitle = document.getElementById('game-over-title');
+        const gameOverMessage = document.getElementById('game-over-message');
+        const playAgainBtn = document.getElementById('play-again-btn');
+        
+        const mapContainer = document.getElementById('world-map-container');
+        const zoomInBtn = document.getElementById('zoom-in-btn');
+        const zoomOutBtn = document.getElementById('zoom-out-btn');
+
+        // --- Game State & P2P ---
+        let peer;
+        let conn;
+        let isHost = false;
+        let gameActive = false;
+        let myTurn = false;
+        const WINNING_SCORE = 10;
+        
+        let gameState = {
+            scores: { player1: 0, player2: 0 },
+            chances: { player1: 3, player2: 3 },
+            currentCountry: null,
+        };
+
+        // --- Country Data & Map ---
+        // UPDATED: This list now matches the data for the simplemaps.com SVG (both id and class attributes).
+        const countryData = [
+            { id: 'AF', name: 'Afghanistan' }, { id: 'AL', name: 'Albania' },
+            { id: 'DZ', name: 'Algeria' }, { id: 'Angola', name: 'Angola' },
+            { id: 'Argentina', name: 'Argentina' }, { id: 'AM', name: 'Armenia' },
+            { id: 'Australia', name: 'Australia' }, { id: 'AT', name: 'Austria' },
+            { id: 'Azerbaijan', name: 'Azerbaijan' }, { id: 'BH', name: 'Bahrain' },
+            { id: 'BD', name: 'Bangladesh' }, { id: 'BB', name: 'Barbados' },
+            { id: 'BY', name: 'Belarus' }, { id: 'BE', name: 'Belgium' },
+            { id: 'BZ', name: 'Belize' }, { id: 'BJ', name: 'Benin' },
+            { id: 'BT', name: 'Bhutan' }, { id: 'BO', name: 'Bolivia' },
+            { id: 'BA', name: 'Bosnia and Herzegovina' }, { id: 'BW', name: 'Botswana' },
+            { id: 'BR', name: 'Brazil' }, { id: 'BN', name: 'Brunei Darussalam' },
+            { id: 'BG', name: 'Bulgaria' }, { id: 'BF', name: 'Burkina Faso' },
+            { id: 'BI', name: 'Burundi' }, { id: 'KH', name: 'Cambodia' },
+            { id: 'CM', name: 'Cameroon' }, { id: 'Canada', name: 'Canada' },
+            { id: 'CF', name: 'Central African Republic' }, { id: 'TD', name: 'Chad' },
+            { id: 'Chile', name: 'Chile' }, { id: 'China', name: 'China' },
+            { id: 'CO', name: 'Colombia' }, { id: 'CR', name: 'Costa Rica' },
+            { id: 'HR', name: 'Croatia' }, { id: 'CU', name: 'Cuba' },
+            { id: 'CZ', name: 'Czech Republic' }, { id: 'CI', name: 'Côte d\'Ivoire' },
+            { id: 'Denmark', name: 'Denmark' }, { id: 'KP', name: 'Dem. Rep. Korea' },
+            { id: 'CD', name: 'Democratic Republic of the Congo' }, { id: 'DJ', name: 'Djibouti' },
+            { id: 'DM', name: 'Dominica' }, { id: 'DO', name: 'Dominican Republic' },
+            { id: 'EC', name: 'Ecuador' }, { id: 'EG', name: 'Egypt' },
+            { id: 'SV', name: 'El Salvador' }, { id: 'GQ', name: 'Equatorial Guinea' },
+            { id: 'ER', name: 'Eritrea' }, { id: 'EE', name: 'Estonia' },
+            { id: 'ET', name: 'Ethiopia' }, { id: 'FI', name: 'Finland' },
+            { id: 'France', name: 'France' }, { id: 'GA', name: 'Gabon' },
+            { id: 'GE', name: 'Georgia' }, { id: 'DE', name: 'Germany' },
+            { id: 'GH', name: 'Ghana' }, { id: 'Greece', name: 'Greece' },
+            { id: 'GD', name: 'Grenada' }, { id: 'GT', name: 'Guatemala' },
+            { id: 'GN', name: 'Guinea' }, { id: 'GW', name: 'Guinea-Bissau' },
+            { id: 'GY', name: 'Guyana' }, { id: 'HT', name: 'Haiti' },
+            { id: 'HN', name: 'Honduras' }, { id: 'HU', name: 'Hungary' },
+            { id: 'IS', name: 'Iceland' }, { id: 'IN', name: 'India' },
+            { id: 'Indonesia', name: 'Indonesia' }, { id: 'IR', name: 'Iran' },
+            { id: 'IQ', name: 'Iraq' }, { id: 'IE', name: 'Ireland' },
+            { id: 'IL', name: 'Israel' }, { id: 'Italy', name: 'Italy' },
+            { id: 'Japan', name: 'Japan' }, { id: 'JM', name: 'Jamaica' },
+            { id: 'JO', name: 'Jordan' }, { id: 'Kazakhstan', name: 'Kazakhstan' },
+            { id: 'KE', name: 'Kenya' }, { id: 'XK', name: 'Kosovo' },
+            { id: 'KW', name: 'Kuwait' }, { id: 'KG', name: 'Kyrgyzstan' },
+            { id: 'LA', name: 'Lao PDR' }, { id: 'LV', name: 'Latvia' },
+            { id: 'LB', name: 'Lebanon' }, { id: 'LS', name: 'Lesotho' },
+            { id: 'LR', name: 'Liberia' }, { id: 'LY', name: 'Libya' },
+            { id: 'LT', name: 'Lithuania' }, { id: 'LU', name: 'Luxembourg' },
+            { id: 'MK', name: 'Macedonia' }, { id: 'MG', name: 'Madagascar' },
+            { id: 'MW', name: 'Malawi' }, { id: 'Malaysia', name: 'Malaysia' },
+            { id: 'MV', name: 'Maldives' }, { id: 'ML', name: 'Mali' },
+            { id: 'MH', name: 'Marshall Islands' }, { id: 'MR', name: 'Mauritania' },
+            { id: 'MX', name: 'Mexico' }, { id: 'MD', name: 'Moldova' },
+            { id: 'MN', name: 'Mongolia' }, { id: 'ME', name: 'Montenegro' },
+            { id: 'MA', name: 'Morocco' },
+            { id: 'MZ', name: 'Mozambique' }, { id: 'MM', name: 'Myanmar' },
+            { id: 'NA', name: 'Namibia' }, { id: 'NR', name: 'Nauru' },
+            { id: 'NP', name: 'Nepal' }, { id: 'Netherlands', name: 'Netherlands' },
+            { id: 'New Zealand', name: 'New Zealand' }, { id: 'NI', name: 'Nicaragua' },
+            { id: 'NE', name: 'Niger' }, { id: 'NG', name: 'Nigeria' },
+            { id: 'Norway', name: 'Norway' }, { id: 'PK', name: 'Pakistan' },
+            { id: 'PW', name: 'Palau' }, { id: 'PS', name: 'Palestine' },
+            { id: 'PA', name: 'Panama' }, { id: 'Papua New Guinea', name: 'Papua New Guinea' },
+            { id: 'PY', name: 'Paraguay' }, { id: 'PE', name: 'Peru' },
+            { id: 'Philippines', name: 'Philippines' }, { id: 'PL', name: 'Poland' },
+            { id: 'PT', name: 'Portugal' }, { id: 'QA', name: 'Qatar' },
+            { id: 'CG', name: 'Republic of Congo' }, { id: 'KR', name: 'Republic of Korea' },
+            { id: 'RO', name: 'Romania' },
+            { id: 'Russian Federation', name: 'Russia' }, { id: 'RW', name: 'Rwanda' },
+            { id: 'LC', name: 'Saint Lucia' }, { id: 'VC', name: 'Saint Vincent and the Grenadines' },
+            { id: 'SA', name: 'Saudi Arabia' },
+            { id: 'SN', name: 'Senegal' }, { id: 'RS', name: 'Serbia' },
+            { id: 'SL', name: 'Sierra Leone' },
+            { id: 'SK', name: 'Slovakia' }, { id: 'SI', name: 'Slovenia' },
+            { id: 'SO', name: 'Somalia' }, { id: 'South Africa', name: 'South Africa' },
+            { id: 'SS', name: 'South Sudan' }, { id: 'ES', name: 'Spain' },
+            { id: 'LK', name: 'Sri Lanka' },
+            { id: 'SD', name: 'Sudan' }, { id: 'SR', name: 'Suriname' },
+            { id: 'SZ', name: 'Swaziland' }, { id: 'Sweden', name: 'Sweden' },
+            { id: 'CH', name: 'Switzerland' }, { id: 'SY', name: 'Syria' },
+            { id: 'TW', name: 'Taiwan' }, { id: 'TJ', name: 'Tajikistan' },
+            { id: 'TZ', name: 'Tanzania' }, { id: 'TH', name: 'Thailand' },
+            { id: 'GM', name: 'The Gambia' }, { id: 'TL', name: 'Timor-Leste' },
+            { id: 'TG', name: 'Togo' }, { id: 'TN', name: 'Tunisia' },
+            { id: 'Turkey', name: 'Turkey' }, { id: 'TM', name: 'Turkmenistan' },
+            { id: 'TV', name: 'Tuvalu' }, { id: 'UG', name: 'Uganda' },
+            { id: 'UA', name: 'Ukraine' }, { id: 'AE', name: 'United Arab Emirates' },
+            { id: 'United Kingdom', name: 'United Kingdom' }, { id: 'United States', name: 'United States' },
+            { id: 'UY', name: 'Uruguay' }, { id: 'UZ', name: 'Uzbekistan' },
+            { id: 'VE', name: 'Venezuela' }, { id: 'Vietnam', name: 'Vietnam' },
+            { id: 'EH', name: 'Western Sahara' }, { id: 'YE', name: 'Yemen' },
+            { id: 'ZM', name: 'Zambia' }, { id: 'ZW', name: 'Zimbabwe' }
+        ];
+
+        let svgMapObject; // To hold the SVG DOM object for manipulation
+
+        // Mapping of territories/dependencies to their parent countries
+        const territoryToCountryMap = {
+            // French territories
+            'GF': 'France',        // French Guiana
+            'RE': 'France',        // Réunion
+            'MQ': 'France',        // Martinique
+            'YT': 'France',        // Mayotte
+            'BL': 'France',        // Saint-Barthélemy
+            'MF': 'France',        // Saint-Martin
+            
+            // Dutch territories
+            'CW': 'Netherlands',   // Curaçao
+            'BQSA': 'Netherlands', // Saba
+            'BQSE': 'Netherlands', // St. Eustatius
+            'BQBO': 'Netherlands', // Bonaire
+            'SX': 'Netherlands',   // Sint Maarten
+            
+            // UK territories
+            'VG': 'United Kingdom',    // British Virgin Islands
+            'BM': 'United Kingdom',    // Bermuda
+            'AI': 'United Kingdom',    // Anguilla
+            'MS': 'United Kingdom',    // Montserrat
+            
+            // US territories
+            'GU': 'United States',     // Guam
+            'AW': 'United States',     // Aruba (sometimes listed as US territory in maps)
+            
+            // Danish territories
+            'GL': 'Denmark',           // Greenland
+        };
+
+        // --- P2P Connection Handling ---
+        function initializePeer(hostIdToConnectTo) {
+            peer = new Peer(); 
+
+            peer.on('open', id => {
+                if (hostIdToConnectTo) { 
+                    connectToHost(hostIdToConnectTo);
+                } else { 
+                    hostIdInput.value = id;
+                    createGameBtn.classList.add('hidden');
+                    hostInfo.classList.remove('hidden');
+                }
+            });
+
+            peer.on('connection', newConn => {
+                setupConnection(newConn);
+            });
+            
+            peer.on('error', err => {
+                console.error("PeerJS error:", err);
+                if (hostIdToConnectTo) {
+                    setupScreen.innerHTML = `<h2 class="text-2xl font-semibold text-red-500">Could not connect.</h2><p class="text-gray-400 mt-2">Please check the Host ID and try again. The host must be waiting for a connection.</p>`;
+                } else {
+                    hostInfo.innerHTML = `<p class="text-red-500">Could not create game. A connection error occurred. Please refresh and try again.</p>`
+                    hostInfo.classList.remove('hidden');
+                }
+            });
+        }
+        
+        function connectToHost(hostId) {
+            const newConn = peer.connect(hostId);
+            setupConnection(newConn);
+        }
+
+        function setupConnection(newConn) {
+            conn = newConn;
+            conn.on('open', () => {
+                gameActive = true;
+                setupScreen.classList.add('hidden');
+                gameScreen.classList.remove('hidden');
+                if (isHost) {
+                    messageArea.textContent = "Opponent connected! Starting game...";
+                    setTimeout(startNewRound, 2000);
+                }
+            });
+            conn.on('data', handleData);
+            conn.on('close', handleDisconnect);
+        }
+        
+        function handleDisconnect() {
+            gameActive = false;
+            messageArea.textContent = 'Opponent has disconnected.';
+            gameOverTitle.textContent = 'Disconnected';
+            gameOverMessage.textContent = 'Your opponent has left the game.';
+            playAgainBtn.textContent = 'Create New Game';
+            gameOverModal.classList.remove('hidden');
+            playAgainBtn.onclick = () => window.location.reload();
+        }
+
+        // --- Data Handling ---
+        function handleData(data) {
+            switch (data.type) {
+                case 'new-round':
+                    gameState.currentCountry = data.country;
+                    gameState.chances.player1 = 3;
+                    gameState.chances.player2 = 3;
+                    updateUI();
+                    resetMapStyles();
+                    myTurn = true;
+                    messageArea.textContent = '';
+                    break;
+                case 'guess':
+                    handleOpponentGuess(data.countryId);
+                    break;
+                case 'round-result':
+                    myTurn = false;
+                    // Display the correct message from each player's perspective
+                    if (data.winner) {
+                        const didIWin = (isHost && data.winner === 'player1') || (!isHost && data.winner === 'player2');
+                        messageArea.textContent = didIWin ? 'You won the round!' : 'Opponent won the round!';
+                    } else {
+                        messageArea.textContent = data.message; // For draw messages
+                    }
+                    gameState.scores = data.scores;
+                    updateUI();
+                    
+                    if(data.winner || data.showCorrectAnswer) {
+                        const correctPaths = findCountryPaths(data.correctCountryId);
+                        correctPaths.forEach(path => path.classList.add('correct-guess'));
+                    }
+
+                    if (isHost) {
+                         setTimeout(checkGameOver, 2000);
+                    }
+                    break;
+                case 'game-over':
+                    showGameOver(data.winner, data.isYou);
+                    break;
+                case 'play-again-request':
+                    if (isHost) {
+                        resetGame();
+                        startNewRound();
+                        conn.send({type: 'play-again-start'});
+                    }
+                    break;
+                case 'play-again-start':
+                    resetGame();
+                    gameOverModal.classList.add('hidden');
+                    break;
+            }
+        }
+        
+        // --- Game Logic ---
+        function startNewRound() {
+            const randomCountry = countryData[Math.floor(Math.random() * countryData.length)];
+            gameState.currentCountry = randomCountry;
+            gameState.chances = { player1: 3, player2: 3 };
+            
+            resetMapStyles();
+            updateUI();
+            myTurn = true;
+            messageArea.textContent = '';
+
+            conn.send({ type: 'new-round', country: randomCountry });
+        }
+
+        function handleGuess(countryId) {
+            if (!myTurn || !gameActive) return;
+
+            const player = isHost ? 'player1' : 'player2';
+            if (gameState.chances[player] <= 0) return;
+            
+            gameState.chances[player]--;
+            conn.send({ type: 'guess', countryId: countryId });
+
+            if (countryId === gameState.currentCountry.id) {
+                myTurn = false;
+                const winner = isHost ? 'player1' : 'player2';
+                gameState.scores[winner]++;
+                
+                const winMessage = `You won the round!`;
+
+                const resultPayload = {
+                    type: 'round-result',
+                    winner: winner,
+                    correctCountryId: countryId,
+                    scores: gameState.scores,
+                    message: winMessage
+                };
+                
+                conn.send(resultPayload);
+                handleData(resultPayload);
+            } else {
+                const paths = findCountryPaths(countryId);
+                paths.forEach(path => path.classList.add('incorrect-guess'));
+                updateUI();
+                checkRoundEnd();
+            }
+        }
+
+        function handleOpponentGuess(countryId) {
+            const opponent = isHost ? 'player2' : 'player1';
+            gameState.chances[opponent]--;
+
+            if (countryId !== gameState.currentCountry.id) {
+                const paths = findCountryPaths(countryId);
+                paths.forEach(path => path.classList.add('opponent-incorrect-guess'));
+                updateUI();
+                checkRoundEnd();
+            }
+        }
+
+        function checkRoundEnd() {
+            if(!isHost) return;
+
+            if (gameState.chances.player1 <= 0 && gameState.chances.player2 <= 0) {
+                 myTurn = false;
+                 const drawMessage = `Round draw! The country was ${gameState.currentCountry.name}.`;
+                 
+                 // Show the correct answer in green
+                 const correctPaths = findCountryPaths(gameState.currentCountry.id);
+                 correctPaths.forEach(path => path.classList.add('correct-guess'));
+                 
+                 const resultPayload = {
+                     type: 'round-result',
+                     winner: null,
+                     correctCountryId: gameState.currentCountry.id,
+                     scores: gameState.scores,
+                     message: drawMessage,
+                     showCorrectAnswer: true
+                 };
+                 conn.send(resultPayload);
+                 handleData(resultPayload);
+            }
+        }
+        
+        function checkGameOver() {
+            if (gameState.scores.player1 >= WINNING_SCORE) {
+                 conn.send({type: 'game-over', winner: 'player1', isYou: false}); 
+                 showGameOver('player1', true);
+            } else if (gameState.scores.player2 >= WINNING_SCORE) {
+                 conn.send({type: 'game-over', winner: 'player2', isYou: true});
+                 showGameOver('player2', false);
+            } else {
+                 startNewRound();
+            }
+        }
+        
+        function showGameOver(winner, isYou) {
+            gameActive = false;
+            if (isYou) {
+                gameOverTitle.textContent = 'You Win!';
+                gameOverMessage.textContent = `Congratulations! You reached ${WINNING_SCORE} points first.`;
+            } else {
+                gameOverTitle.textContent = 'You Lose!';
+                gameOverMessage.textContent = `Your opponent reached ${WINNING_SCORE} points. Better luck next time!`;
+            }
+            gameOverModal.classList.remove('hidden');
+        }
+
+        function resetGame() {
+            gameState = {
+                scores: { player1: 0, player2: 0 },
+                chances: { player1: 3, player2: 3 },
+                currentCountry: null,
+            };
+            updateUI();
+            resetMapStyles();
+            gameActive = true;
+        }
+
+        // --- UI Updates ---
+        function updateUI() {
+            if (!gameState.currentCountry) return;
+            
+            countryToGuessEl.textContent = gameState.currentCountry.name;
+
+            if (isHost) {
+                // Round scores (individual round performance)
+                player1ScoreEl.textContent = gameState.scores.player1;
+                player1ChancesEl.textContent = gameState.chances.player1;
+                player2ScoreEl.textContent = gameState.scores.player2;
+                player2ChancesEl.textContent = gameState.chances.player2;
+                
+                // Session scores (overall game progress)
+                sessionPlayer1ScoreEl.textContent = gameState.scores.player1;
+                sessionPlayer2ScoreEl.textContent = gameState.scores.player2;
+            } else {
+                // Round scores (individual round performance)
+                player1ScoreEl.textContent = gameState.scores.player2;
+                player1ChancesEl.textContent = gameState.chances.player2;
+                player2ScoreEl.textContent = gameState.scores.player1;
+                player2ChancesEl.textContent = gameState.chances.player1;
+                
+                // Session scores (overall game progress)
+                sessionPlayer1ScoreEl.textContent = gameState.scores.player2;
+                sessionPlayer2ScoreEl.textContent = gameState.scores.player1;
+            }
+        }
+
+        function resetMapStyles() {
+            if (!svgMapObject) return;
+            const paths = svgMapObject.querySelectorAll('path');
+            paths.forEach(p => {
+                p.classList.remove('correct-guess', 'incorrect-guess', 'opponent-incorrect-guess');
+            });
+        }
+        
+        // Helper function to find all country paths by id or class, including territories
+        function findCountryPaths(countryIdentifier) {
+            let allPaths = [];
+            
+            // First, find paths for the main country
+            let paths = svgMapObject.querySelectorAll(`[id="${countryIdentifier}"]`);
+            if (paths.length > 0) {
+                allPaths = allPaths.concat(Array.from(paths));
+            } else {
+                // Try by class if no ID found
+                paths = svgMapObject.querySelectorAll(`[class="${countryIdentifier}"]`);
+                allPaths = allPaths.concat(Array.from(paths));
+            }
+            
+            // Also find any territories that belong to this country
+            Object.keys(territoryToCountryMap).forEach(territoryId => {
+                if (territoryToCountryMap[territoryId] === countryIdentifier) {
+                    // Find paths for this territory
+                    let territoryPaths = svgMapObject.querySelectorAll(`[id="${territoryId}"]`);
+                    if (territoryPaths.length > 0) {
+                        allPaths = allPaths.concat(Array.from(territoryPaths));
+                    } else {
+                        // Try by class
+                        territoryPaths = svgMapObject.querySelectorAll(`[class="${territoryId}"]`);
+                        allPaths = allPaths.concat(Array.from(territoryPaths));
+                    }
+                }
+            });
+            
+            return allPaths;
+        }
+        
+        // Helper function to find country path by id or class (single path - for backwards compatibility)
+        function findCountryPath(countryIdentifier) {
+            const paths = findCountryPaths(countryIdentifier);
+            return paths.length > 0 ? paths[0] : null;
+        }
+        
+        // --- Map Panning and Zooming ---
+        function setupMapInteraction(svgElement) {
+            let panZoom = { x: 0, y: 0, scale: 1 };
+            let isPanning = false;
+            let startPoint = { x: 0, y: 0 };
+
+            function applyTransform() {
+                svgElement.style.transform = `translate(${panZoom.x}px, ${panZoom.y}px) scale(${panZoom.scale})`;
+            }
+
+            zoomInBtn.addEventListener('click', () => {
+                panZoom.scale = Math.min(5, panZoom.scale + 0.5);
+                applyTransform();
+            });
+
+            zoomOutBtn.addEventListener('click', () => {
+                panZoom.scale = Math.max(1, panZoom.scale - 0.5);
+                if(panZoom.scale <= 1) {
+                    panZoom.x = 0;
+                    panZoom.y = 0;
+                }
+                applyTransform();
+            });
+
+            mapContainer.addEventListener('mousedown', (e) => {
+                if (e.target.tagName !== 'path') {
+                    isPanning = true;
+                    startPoint = { x: e.clientX - panZoom.x, y: e.clientY - panZoom.y };
+                    mapContainer.style.cursor = 'grabbing';
+                }
+            });
+
+            mapContainer.addEventListener('mousemove', (e) => {
+                if (isPanning) {
+                    e.preventDefault();
+                    panZoom.x = e.clientX - startPoint.x;
+                    panZoom.y = e.clientY - startPoint.y;
+                    applyTransform();
+                }
+            });
+            
+            const stopPanning = () => {
+                if(isPanning) {
+                    isPanning = false;
+                    mapContainer.style.cursor = 'grab';
+                }
+            }
+
+            mapContainer.addEventListener('mouseup', stopPanning);
+            mapContainer.addEventListener('mouseleave', stopPanning);
+        }
+
+        // --- Event Listeners & Initialization ---
+        
+        copyIdBtn.addEventListener('click', () => {
+            hostIdInput.select();
+            document.execCommand('copy');
+            copySuccess.textContent = 'Copied!';
+            setTimeout(() => copySuccess.textContent = '', 2000);
+        });
+        
+        playAgainBtn.addEventListener('click', () => {
+            playAgainBtn.disabled = true;
+            if (isHost) {
+                 resetGame();
+                 startNewRound();
+                 conn.send({type: 'play-again-start'});
+                 gameOverModal.classList.add('hidden');
+                 playAgainBtn.disabled = false;
+            } else {
+                conn.send({type: 'play-again-request'});
+                playAgainBtn.textContent = 'Waiting for host...';
+            }
+        });
+
+        async function init() {
+            try {
+                // Fetch the SVG from a local file.
+                const response = await fetch('./world.svg');
+                if (!response.ok) throw new Error(`Network response was not ok: ${response.statusText}`);
+                
+                const svgText = await response.text();
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = svgText;
+                svgMapObject = tempDiv.querySelector('svg');
+                
+                if (!svgMapObject) throw new Error('SVG file loaded but could not find SVG element inside.');
+
+                svgMapObject.id = 'world-map';
+                mapContainer.prepend(svgMapObject);
+                
+                svgMapObject.addEventListener('click', (e) => {
+                    const countryPath = e.target.closest('path');
+                    if (countryPath) {
+                        // Get identifier from either id attribute or class attribute
+                        let countryId = countryPath.id;
+                        if (!countryId && countryPath.className) {
+                            countryId = countryPath.className.baseVal || countryPath.className;
+                        }
+                        if (countryId) {
+                            // Check if this is a territory that should map to a parent country
+                            const parentCountry = territoryToCountryMap[countryId];
+                            const finalCountryId = parentCountry || countryId;
+                            handleGuess(finalCountryId);
+                        }
+                    }
+                });
+
+                setupMapInteraction(svgMapObject);
+
+            } catch (error) {
+                console.error('Failed to load SVG map:', error);
+                mapContainer.innerHTML = `<p class="text-red-500 text-center p-4">Error: Could not load world.svg.<br>Make sure the file is in the same folder and you are running a local server.</p>`;
+            }
+
+            // --- HOST PATH ---
+            createGameBtn.addEventListener('click', () => {
+                isHost = true;
+                createGameBtn.disabled = true;
+                createGameBtn.textContent = 'Creating...';
+                joinSection.classList.add('hidden');
+                orDivider.classList.add('hidden');
+                initializePeer();
+            });
+
+            // --- GUEST PATH ---
+            joinGameBtn.addEventListener('click', () => {
+                const hostId = joinIdInput.value.trim();
+                if (hostId) {
+                    isHost = false;
+                    joinGameBtn.disabled = true;
+                    joinGameBtn.textContent = 'Joining...';
+                    createSection.classList.add('hidden');
+                    orDivider.classList.add('hidden');
+                    initializePeer(hostId);
+                } else {
+                    alert('Please enter a valid Host ID.'); 
+                }
+            });
+        }
+
+        window.onload = init;
+    </script>
+
+</body>
+</html>
